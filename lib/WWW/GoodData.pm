@@ -8,7 +8,7 @@ WWW::GoodData - Client library for GoodData REST-ful API
 
   use WWW::GoodData;
   my $gdc = new WWW::GoodData;
-  print $gdc->uri ('md', { title => 'My Project' });
+  print $gdc->get_uri ('md', { title => 'My Project' });
 
 =head1 DESCRIPTION
 
@@ -66,11 +66,22 @@ sub get_links
 {
 	my $self = shift;
 	@_ = map { ref $_ ? $_ : { category => $_ } } @_;
+
 	my $link = pop;
 	my @path = @_;
 
 	my $this_links;
 	my $uri;
+
+	# Projects are not navigatable, but resources underneath it
+	# are project ids, same as in md hierarchy...
+	my $projecthack;
+	if (scalar @path == 1 and $path[0]->{category} and $path[0]->{category} eq 'projects') {
+		# Convert md links into project ones, if we did use the fake path
+		return map { $_->{link} =~ s/^\/gdc\/md/\/gdc\/projects/;
+			$_->{category} = 'projects' if $_->{category} eq 'md';
+			$_ } $self->get_links ('md', $link);
+	}
 
 	unless (@path) {
 		# Root
@@ -85,7 +96,16 @@ sub get_links
 	# Not yet cached
 	unless ($$this_links) {
 		my $response = $self->{agent}->get ($uri);
-		$$this_links = $response->{about}{links};
+		if (exists $response->{project}) {
+			# Not only there are no links to the project
+			# structure; the links in it itself seem weird...
+			$$this_links = [ map {{
+				category => $_,
+				link => $response->{project}{links}{$_},
+				}} keys %{$response->{project}{links}} ];
+		} else {
+			$$this_links = $response->{about}{links};
+		}
 	}
 
 	# Return matching links
@@ -93,8 +113,10 @@ sub get_links
 		my $this_link = $_;
 		# Filter out those, who lack any of our keys or
 		# hold a different value for it.
-		not map { not exists $link->{$_} or
-			$link->{$_} ne $this_link->{$_} ? 1 : () } keys %$link
+		not map { not exists $link->{$_}
+			or not exists $this_link->{$_}
+			or $link->{$_} ne $this_link->{$_}
+			? 1 : () } keys %$link
 	} @$$this_links;
 }
 
@@ -162,6 +184,22 @@ Return array of links to project resources on metadata server.
 sub projects
 {
 	shift->get_links (qw/md project/);
+}
+
+=item B<delete_project>
+
+Delete a project given its identifier.
+
+=cut
+
+sub delete_project
+{
+	my $self = shift;
+	my $project = shift;
+
+	my $uri = $self->get_uri ('projects', { identifier => $project })
+		or die "No such project: $project";
+	$self->{agent}->delete ($uri);
 }
 
 =back

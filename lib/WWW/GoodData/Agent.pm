@@ -91,6 +91,18 @@ sub post
 	return $self->SUPER::post ($uri, @args);
 }
 
+=item delete URI
+
+Convenience method for constructing and issuing a DELETE request.
+
+=cut
+
+sub delete
+{
+	my ($self, $uri) = @_;
+	return $self->request (new HTTP::Request (DELETE => $uri));
+}
+
 =item request PARAMS
 
 This call is common for all request types.
@@ -117,7 +129,8 @@ sub request
 	return $response if ref $response eq 'HASH';
 
 	# Decode
-	my $decoded = $response->header ('Content-Type') eq 'application/json'
+	my $decoded = $response->content and
+		$response->header ('Content-Type') eq 'application/json'
 		? decode_json ($response->content)
 		: { raw => $response->content };
 
