@@ -64,6 +64,8 @@ my %actions = (
 	login => \&login,
 	lsprojects => \&lsprojects,
 	rmproject => \&rmproject,
+	mkproject => \&mkproject,
+	project => \&project,
 	help => \&help,
 	shell => \&shell,
 );
@@ -143,6 +145,39 @@ sub login
 	$gdc->login ($user, $password);
 }
 
+=head2 project
+
+Change or print the default project URI. Default project is used
+by various commands involving projects, including B<mkproject> and
+B<rmproject>.
+
+=over 4
+
+=item B<-p>, B<--project>
+
+Project URI.
+No checking is done with the project URI.
+
+=back
+
+=cut
+
+sub project
+{
+	my $this_project;
+	GetOptionsFromArray (\@_,
+		'p|project' => \$this_project,
+	) or die 'Bad arguments to lsprojects';
+	$this_project = shift if @_;
+	die 'Extra arguments' if @_;
+
+	if ($this_project) {
+		$project = $this_project;
+	} else {
+		print "$project\n";
+	}
+}
+
 =head2 lsprojects
 
 Print a list of available projects.
@@ -168,12 +203,13 @@ sub lsprojects
 
 	foreach my $project ($gdc->projects) {
 		if ($long) {
-			print "Identifier: ".$project->{identifier}."\n";
+			print "Link: ".$project->{link}."\n";
 			print "\tTitle: ".$project->{title}."\n";
 			print "\tSummary: ".$project->{summary}."\n";
-			print "\tLink: ".$project->{link}."\n";
+			print "\tCreated: ".$project->{created}."\n";
+			print "\tUpdated: ".$project->{updated}."\n";
 		} else {
-			print $project->{identifier}.' ';
+			print $project->{link}.' ';
 			print $project->{title}."\n";
 		}
 	}
@@ -188,6 +224,8 @@ Delete a project.
 =item B<-P>, B<--project>
 
 Name of the project (first column from B<lsprojects>).
+Default project (see B<project>, B<mkproject> and global B<<--project>>
+option) is used if none is specified.
 
 =back
 
@@ -204,6 +242,42 @@ sub rmproject
 	die 'No project name given' unless $project;
 
 	$gdc->delete_project ($project);
+}
+
+
+=head2 mkproject [title] [summary]
+
+Create a project.
+
+=over 4
+
+=item B<-t>, B<--title>
+
+Title of the project.
+
+=item B<-s>, B<--summary>
+
+Descriptive summary of the project.
+
+=back
+
+=cut
+
+sub mkproject
+{
+	my $title;
+	my $summary = '';
+
+	GetOptionsFromArray (\@_,
+		't|title=s' => \$title,
+		's|summary=s' => \$summary,
+	) or die 'Bad arguments to mkproject';
+	$title = shift if @_;
+	$summary = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No project title given' unless $title;
+
+	$project = $gdc->create_project ($title, $summary);
 }
 
 

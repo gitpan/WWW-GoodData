@@ -61,55 +61,63 @@ sub new
 }
 
 # API hierarchy traversal Cache
-our $links;
+our %links;
 sub get_links
 {
 	my $self = shift;
-	@_ = map { ref $_ ? $_ : { category => $_ } } @_;
+	my $root = ref $_[0] ? shift : $root;
+	my @path = map { ref $_ ? $_ : { category => $_ } } @_;
+	my $link = shift @path;
 
-	my $link = pop;
-	my @path = @_;
+	unless ($links{$root}) {
+		my $response = $self->{agent}->get ($root);
+		# Various ways to get the links
+		if (exists $response->{about}) {
+			# Ordinary structure with about section
+			$links{$root} = $response->{about}{links};
+		} elsif (scalar keys %$response == 1) {
+			my @elements = ($response);
+			my ($structure) = keys %$response;
 
-	my $this_links;
-	my $uri;
+			# Aggregated resources (/gdc/account/profile/666/projects)
+			@elements = @{$response->{$structure}}
+				if ref $response->{$structure} eq 'ARRAY';
 
-	# Projects are not navigatable, but resources underneath it
-	# are project ids, same as in md hierarchy...
-	my $projecthack;
-	if (scalar @path == 1 and $path[0]->{category} and $path[0]->{category} eq 'projects') {
-		# Convert md links into project ones, if we did use the fake path
-		return map { $_->{link} =~ s/^\/gdc\/md/\/gdc\/projects/;
-			$_->{category} = 'projects' if $_->{category} eq 'md';
-			$_ } $self->get_links ('md', $link);
-	}
+			$links{$root} = [];
+			foreach my $element (@elements) {
+				my $root = $root;
+				my ($type) = keys %$element;
 
-	unless (@path) {
-		# Root
-		$uri = '';
-		$this_links = \$links;
-	} else {
-		my ($entry) = $self->get_links (@path);
-		$uri = $entry->{link} or return ();
-		$this_links = \$entry->{children};
-	}
+				# Metadata with interesting information outside "links"
+				if (exists $element->{$type}{links}{self}
+					and exists $element->{$type}{meta}) {
+					push @{$links{$root}}, {
+						%{$element->{$type}{meta}},
+						category => $type,
+						structure => $structure,
+						link => $element->{$type}{links}{self},
+					};
+					$root = $element->{$type}{links}{self};
+				}
 
-	# Not yet cached
-	unless ($$this_links) {
-		my $response = $self->{agent}->get ($uri);
-		if (exists $response->{project}) {
-			# Not only there are no links to the project
-			# structure; the links in it itself seem weird...
-			$$this_links = [ map {{
-				category => $_,
-				link => $response->{project}{links}{$_},
-				}} keys %{$response->{project}{links}} ];
+				# The links themselves
+				foreach my $category (keys %{$element->{$type}{links}}) {
+					my $link = $element->{$type}{links}{$category};
+					push @{$links{$root}}, {
+						structure => $structure,
+						category => $category,
+						type => $type,
+						link => $link,
+					};
+				}
+			}
+
 		} else {
-			$$this_links = $response->{about}{links};
+			die 'No links';
 		}
 	}
 
-	# Return matching links
-	return grep {
+	my @matches = grep {
 		my $this_link = $_;
 		# Filter out those, who lack any of our keys or
 		# hold a different value for it.
@@ -117,7 +125,16 @@ sub get_links
 			or not exists $this_link->{$_}
 			or $link->{$_} ne $this_link->{$_}
 			? 1 : () } keys %$link
-	} @$$this_links;
+	} @{$links{$root}};
+
+	# Fully resolved
+	return @matches unless @path;
+
+	die 'Ambigious path' unless scalar @matches == 1;
+	my $new_root = new URI ($matches[0]->{link});
+	$new_root = $new_root->abs ($root);
+
+	return $self->get_links ($new_root, @path);
 }
 
 =item B<links> PATH
@@ -140,7 +157,7 @@ sub links
 {
 	my @links = get_links @_;
 	return @links if @links;
-	undef $links;
+	%links = ();
 	return get_links @_;
 }
 
@@ -168,7 +185,7 @@ sub login
 	my $self = shift;
 	my ($login, $password) = @_;
 
-	return $self->{agent}->post ($self->get_uri ('login'),
+	$self->{login} = $self->{agent}->post ($self->get_uri ('login'),
 		{postUserLogin => {
 			login => $login,
 			password => $password,
@@ -183,10 +200,13 @@ Return array of links to project resources on metadata server.
 
 sub projects
 {
-	shift->get_links (qw/md project/);
+	my $self = shift;
+	die 'Not logged in' unless $self->{login};
+	$self->get_links (new URI ($self->{login}{userLogin}{profile}),
+		qw/projects project/);
 }
 
-=item B<delete_project>
+=item B<delete_project> IDENTIFIER
 
 Delete a project given its identifier.
 
@@ -197,9 +217,40 @@ sub delete_project
 	my $self = shift;
 	my $project = shift;
 
-	my $uri = $self->get_uri ('projects', { identifier => $project })
+	# Instead of directly DELETE-ing the URI gotten, we check
+	# the existence of a project with such link, as a sanity check
+	my $uri = $self->get_uri (new URI ($self->{login}{userLogin}{profile}),
+		'projects', { category => 'project', link => $project })
 		or die "No such project: $project";
 	$self->{agent}->delete ($uri);
+}
+
+=item B<create_project> TITLE SUMMARY
+
+Create a project given its title and optionally summary,
+return its identifier.
+
+=cut
+
+sub create_project
+{
+	my $self = shift;
+	my $title = shift or die 'No title given';
+	my $summary = shift || '';
+
+	# The redirect magic does not work for POSTs and we can't really
+	# handle 401s until the API provides reason for them...
+	$self->{agent}->get ($self->get_uri ('token'));
+
+	return $self->{agent}->post ($self->get_uri ('projects'), {
+		project => {
+			# No hook to override this; use web UI
+			content => { guidedNavigation => 1 },
+			meta => {
+				summary => $summary,
+				title => $title,
+			}
+	}})->{uri};
 }
 
 =back
