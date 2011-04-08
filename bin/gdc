@@ -2,7 +2,7 @@
 
 =head1 NAME
 
-gdc - Client utility for GoodData REST-ful API
+gdc - Client utility for GoodData on-demand Business Intelligence platform
 
 =head1 SYNOPSIS
 
@@ -43,6 +43,25 @@ Print a brief help message and exits.
 
 Prints the manual page and exits.
 
+=item B<-u>, B<--user> B<< <email> >>
+
+Use the identity of specified user.
+See also the B<login> command.
+
+=item B<-p>, B<--password>
+
+Log in on start, provided B<--user> option was set as well.
+
+=item B<-P>, B<--project>
+
+Project URI. It is used as a default value for commands that
+accept project URI option (such as B<rmproject> and B<lsreports>)
+and can be changed from within the shell (see B<project>
+and B<mkproject> commands).
+
+No checking is done with the project URI util a command that
+acts upon the project is issued.
+
 =back
 
 =cut
@@ -66,6 +85,7 @@ my %actions = (
 	rmproject => \&rmproject,
 	mkproject => \&mkproject,
 	project => \&project,
+	lsreports => \&lsreports,
 	help => \&help,
 	shell => \&shell,
 );
@@ -145,7 +165,7 @@ sub login
 	$gdc->login ($user, $password);
 }
 
-=head2 project
+=head2 project [uri]
 
 Change or print the default project URI. Default project is used
 by various commands involving projects, including B<mkproject> and
@@ -186,7 +206,7 @@ Print a list of available projects.
 
 =item B<-v>, B<--long>
 
-Add unnecessary details
+Add unnecessary details.
 
 =back
 
@@ -215,7 +235,7 @@ sub lsprojects
 	}
 }
 
-=head2 rmproject
+=head2 rmproject [uri]
 
 Delete a project.
 
@@ -223,9 +243,8 @@ Delete a project.
 
 =item B<-P>, B<--project>
 
-Name of the project (first column from B<lsprojects>).
-Default project (see B<project>, B<mkproject> and global B<<--project>>
-option) is used if none is specified.
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
 
 =back
 
@@ -244,8 +263,7 @@ sub rmproject
 	$gdc->delete_project ($project);
 }
 
-
-=head2 mkproject [title] [summary]
+=head2 mkproject <title> [summary]
 
 Create a project.
 
@@ -280,6 +298,51 @@ sub mkproject
 	$project = $gdc->create_project ($title, $summary);
 }
 
+=head2 lsreports [project]
+
+Print a list of reports in a project.
+
+=over 4
+
+=item B<-P>, B<--project>
+
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
+
+=item B<-v>, B<--long>
+
+Add unnecessary details.
+
+=back
+
+=cut
+
+sub lsreports
+{
+	my $long;
+	my $project = $project;
+
+	GetOptionsFromArray (\@_,
+		'v|long' => \$long,
+		'P|project' => \$project,
+	) or die 'Bad arguments to lsprojects';
+	$project = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No project URI given' unless $project;
+
+	foreach my $report ($gdc->reports ($project)) {
+		if ($long) {
+			print "Link: ".$report->{link}."\n";
+			print "\tTitle: ".$report->{title}."\n";
+			print "\tSummary: ".$report->{summary}."\n";
+			print "\tCreated: ".$report->{created}."\n";
+			print "\tUpdated: ".$report->{updated}."\n";
+		} else {
+			print $report->{link}.' ';
+			print $report->{title}."\n";
+		}
+	}
+}
 
 =head2 help
 
@@ -301,8 +364,6 @@ $gdc->login ($user, $password) if defined $user;
 pod2usage ("No such command exists: '$command'")
 	unless exists $actions{$command};
 $actions{$command}->(@ARGV);
-
-=back
 
 =head1 SEE ALSO
 

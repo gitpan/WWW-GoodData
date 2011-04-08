@@ -75,6 +75,9 @@ sub get_links
 		if (exists $response->{about}) {
 			# Ordinary structure with about section
 			$links{$root} = $response->{about}{links};
+		} elsif (exists $response->{query} and exists $response->{query}{entries}) {
+			# Inconsistent query entries
+			$links{$root} = $response->{query}{entries};
 		} elsif (scalar keys %$response == 1) {
 			my @elements = ($response);
 			my ($structure) = keys %$response;
@@ -219,8 +222,8 @@ sub delete_project
 
 	# Instead of directly DELETE-ing the URI gotten, we check
 	# the existence of a project with such link, as a sanity check
-	my $uri = $self->get_uri (new URI ($self->{login}{userLogin}{profile}),
-		'projects', { category => 'project', link => $project })
+	my $uri = $self->get_uri (new URI ($project),
+		{ category => 'self', type => 'project' }) # Validate it's a project
 		or die "No such project: $project";
 	$self->{agent}->delete ($uri);
 }
@@ -253,11 +256,33 @@ sub create_project
 	}})->{uri};
 }
 
+=item B<reports> PROJECT
+
+Return array of links to repoort resources on metadata server.
+
+=cut
+
+sub reports
+{
+	my $self = shift;
+	my $project = shift;
+
+	die 'Not logged in' unless $self->{login};
+	$self->get_links (new URI ($project),
+		{ category => 'self', type => 'project' }, # Validate it's a project
+		qw/metadata query reports/, {});
+}
+
+
 =back
 
 =head1 SEE ALSO
 
 =over
+
+=item *
+
+L<http://developer.gooddata.com/api/> -- API documentation
 
 =item *
 
