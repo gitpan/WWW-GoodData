@@ -46,6 +46,13 @@ blessed, otherwise a new one is created. Possible properties include:
 
 A L<WWW::GoodData::Agent> instance to use.
 
+=item B<retries>
+
+A number of retries to obtain results of asynchronous tasks, such as
+report exports or data uploads. See B<poll>.
+
+Defaults to 3600 (delay of one hour).
+
 =back
 
 =cut
@@ -56,6 +63,7 @@ sub new
 	my $self = shift || {};
 	bless $self, $class;
 	$self->{agent} ||= new WWW::GoodData::Agent ($root);
+	$self->{retries} ||= 3600;
 	$self->{agent}->{error_callback} = \&error_callback;
 	return $self;
 }
@@ -65,7 +73,7 @@ our %links;
 sub get_links
 {
 	my $self = shift;
-	my $root = ref $_[0] ? shift : $root;
+	my $root = (ref $_[0] and ref $_[0] ne 'HASH') ? shift : $root;
 	my @path = map { ref $_ ? $_ : { category => $_ } } @_;
 	my $link = shift @path;
 
@@ -133,6 +141,7 @@ sub get_links
 	# Fully resolved
 	return @matches unless @path;
 
+	die 'Nonexistent component in path' unless @matches;
 	die 'Ambigious path' unless scalar @matches == 1;
 	my $new_root = new URI ($matches[0]->{link});
 	$new_root = $new_root->abs ($root);
@@ -193,6 +202,29 @@ sub login
 			login => $login,
 			password => $password,
 			remember => 0}});
+}
+
+=item B<logout>
+
+Make server invalidate the client session and drop
+credential tokens.
+
+Is called upon destruction of the GoodData client instance.
+
+=cut
+
+sub logout
+{
+	my $self = shift;
+
+	die 'Not logged in' unless defined $self->{login};
+
+	# The redirect magic does not work for POSTs and we can't really
+	# handle 401s until the API provides reason for them...
+	$self->{agent}->get ($self->get_uri ('token'));
+
+	$self->{agent}->delete ($self->{login}{userLogin}{state});
+	$self->{login} = undef;
 }
 
 =item B<projects>
@@ -273,6 +305,96 @@ sub reports
 		qw/metadata query reports/, {});
 }
 
+=item B<compute_report> REPORT
+
+Trigger a report computation and return the URI of the result resource.
+
+=cut
+
+sub compute_report
+{
+	my $self = shift;
+	my $report = shift;
+
+	return $self->{agent}->post (
+		$self->get_uri (qw/xtab xtab-executor3/),
+		{ report_req => { report => $report }}
+	)->{reportResult2}{meta}{uri};
+}
+
+=item B<export_report> REPORT FORMAT
+
+Submit an exporter task for a computed report (see B<compute_report>),
+wait for completion and return raw data in desired format.
+
+=cut
+
+sub export_report
+{
+	my $self = shift;
+	my $report = shift;
+	my $format = shift;
+
+	# Compute the report
+	my $result = $self->{agent}->post (
+		$self->get_uri (qw/report-exporter exporter-executor/),
+		{ result_req => { format => $format,
+			report => $self->compute_report ($report) }}
+	);
+
+	# Trigger the export
+	my $exported = $self->poll (
+		sub { $self->{agent}->get ($result) },
+		sub { shift->{raw} ne 'null' }
+	) or die 'Timed out';
+
+	# Gotten the correctly coded result?
+	return $exported->{raw} if $exported->{type} eq {
+		png => 'image/png',
+		pdf => 'application/pdf',
+		xls => 'application/vnd.ms-excel',
+	}->{$format};
+
+	die 'Wrong type of content returned';
+
+=item B<poll> BODY CONDITION
+
+Should only be used internally.
+
+Run BODY passing its return value to call to CONDITION until it
+evaluates to true or B<retries> (see properties) times out.
+
+Returns value is of last iteration of BODY in case
+CONDITION succeeds, otherwise undefined (in case of timeout).
+
+=cut
+
+sub poll
+{
+        my $self = shift;
+        my ($body, $cond) = @_;
+        my $retries = $self->{retries};
+
+        while ($retries--) {
+                my $ret = $body->();
+                return $ret if $cond->($ret);
+                sleep 1;
+        }
+
+        return undef;
+}
+
+=item B<DESTROY>
+
+Log out the session with B<logout> unless not logged in.
+
+=cut
+
+sub DESTROY
+{
+	my $self = shift;
+	$self->logout if $self->{login};
+}
 
 =back
 
