@@ -88,6 +88,9 @@ my %actions = (
 	project => \&project,
 	lsreports => \&lsreports,
 	export => \&export,
+	model => \&model,
+	chmodel => \&chmodel,
+	upload => \&upload,
 	help => \&help,
 	shell => \&shell,
 );
@@ -109,7 +112,7 @@ sub shell
 		return unless defined $line;
 		$readline->addhistory ($line) if $line;
 		my ($command, @args) = shellwords ($line);
-		next unless $command;
+		next unless defined $command;
 		if (exists $actions{$command}) {
 			eval { $actions{$command}->(@args) };
 			warn $@ if $@;
@@ -153,7 +156,7 @@ sub login
 	$user = shift if @_;
 	$password = shift if @_;
 	die 'Extra arguments' if @_;
-	die 'No user name given' unless $user;
+	die 'No user name given' unless defined $user;
 
 	# stty might not be portable to NT and such
 	if (not defined $password and -t STDIN) {
@@ -188,7 +191,7 @@ B<rmproject>.
 
 =over 4
 
-=item B<-p>, B<--project>
+=item B<-P>, B<--project>
 
 Project URI.
 No checking is done with the project URI.
@@ -201,7 +204,7 @@ sub project
 {
 	my $this_project;
 	GetOptionsFromArray (\@_,
-		'p|project' => \$this_project,
+		'P|project=s' => \$this_project,
 	) or die 'Bad arguments to lsprojects';
 	$this_project = shift if @_;
 	die 'Extra arguments' if @_;
@@ -209,7 +212,7 @@ sub project
 	if ($this_project) {
 		$project = $this_project;
 	} else {
-		print "$project\n";
+		print $project ? "$project\n" : "No project selected.\n";
 	}
 }
 
@@ -271,8 +274,9 @@ sub rmproject
 	GetOptionsFromArray (\@_,
 		'P|project=s' => \$project,
 	) or die 'Bad arguments to rmproject';
+	$project = shift if @_;
 	die 'Extra arguments' if @_;
-	die 'No project name given' unless $project;
+	die 'No project name given' unless defined $project;
 
 	$gdc->delete_project ($project);
 }
@@ -307,7 +311,7 @@ sub mkproject
 	$title = shift if @_;
 	$summary = shift if @_;
 	die 'Extra arguments' if @_;
-	die 'No project title given' unless $title;
+	die 'No project title given' unless defined $title;
 
 	$project = $gdc->create_project ($title, $summary);
 }
@@ -338,10 +342,10 @@ sub lsreports
 
 	GetOptionsFromArray (\@_,
 		'v|long' => \$long,
-		'P|project' => \$project,
+		'P|project=s' => \$project,
 	) or die 'Bad arguments to lsprojects';
 	die 'Extra arguments' if @_;
-	die 'No project URI given' unless $project;
+	die 'No project URI given' unless defined $project;
 
 	foreach my $report ($gdc->reports ($project)) {
 		if ($long) {
@@ -388,18 +392,16 @@ Can be unspecified if file name ends with a dot and format name
 
 sub export
 {
-	my $long;
 	my $project = $project;
 	my $report;
 	my $file;
 	my $format;
 
 	GetOptionsFromArray (\@_,
-		'v|long' => \$long,
 		'P|project' => \$project,
 		'r|report' => \$report,
-		'f|file' => \$file,
-		'F|format' => \$format,
+		'f|file=s' => \$file,
+		'F|format=s' => \$format,
 	) or die 'Bad arguments to export';
 	$report = shift if @_;
 	$file = shift if @_;
@@ -407,15 +409,137 @@ sub export
 		if $file and not $format;
 	$format = shift if @_;
 	die 'Extra arguments' if @_;
-	die 'No project URI given' unless $project;
-	die 'No report URI given' unless $report;
-	die 'No output file given' unless $file;
-	die 'No output format given' unless $format;
+	die 'No project URI given' unless defined $project;
+	die 'No report URI given' unless defined $report;
+	die 'No output file given' unless defined $file;
+	die 'No output format given' unless defined $format;
 
 	my $document = $gdc->export_report ($report, $format);
 	open (my $dump, '>', $file) or die $!;
 	print $dump $document;
 	close ($dump) or die $!;
+}
+
+=head2 model
+
+Export a Logical Data Model (LDM) picture in PNG format into file.
+
+=over 4
+
+=item B<-P>, B<--project>
+
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
+
+=item B<-f>, B<--file>
+
+File to place the result into.
+
+=back
+
+=cut
+
+sub model
+{
+	my $long;
+	my $project = $project;
+	my $file;
+
+	GetOptionsFromArray (\@_,
+		'P|project=s' => \$project,
+		'f|file=s' => \$file,
+	) or die 'Bad arguments to model';
+	$file = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No project URI given' unless defined $project;
+	die 'No output file given' unless defined $file;
+
+	my $document = $gdc->ldm_picture ($project);
+	open (my $dump, '>', $file) or die $!;
+	print $dump $document;
+	close ($dump) or die $!;
+}
+
+=head2 chmodel
+
+Change a Logical Data Model (LDM) with MAQL DDL script.
+
+The MAQL script can be either specified inline as argument
+to B<chmodel>, or read from file specified with B<--file>
+option (see below).
+
+=over 4
+
+=item B<-P>, B<--project>
+
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
+
+=item B<-f>, B<--file>
+
+Read MAQL script from specified file.
+
+=back
+
+=cut
+
+sub chmodel
+{
+	my $long;
+	my $project = $project;
+	my $maql;
+	my $file;
+
+	GetOptionsFromArray (\@_,
+		'P|project' => \$project,
+		'f|file=s' => \$file,
+	) or die 'Bad arguments to model';
+	$maql = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No project URI given' unless defined $project;
+	if ($file) {
+		open (my $script, '<', $file) or die $!;
+		$maql = join '', <$script>;
+		close ($script) or die $!;
+	}
+	die 'No MAQL script given' unless defined $maql;
+	$gdc->ldm_manage ($project, $maql);
+}
+
+=head2 upload
+
+Update data set with new data.
+
+=over 4
+
+=item B<-P>, B<--project>
+
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
+
+=item B<-f>, B<--file>
+
+SLI Manifest of the upload.
+
+=back
+
+=cut
+
+sub upload
+{
+	my $long;
+	my $project = $project;
+	my $file;
+
+	GetOptionsFromArray (\@_,
+		'P|project' => \$project,
+		'f|file=s' => \$file,
+	) or die 'Bad arguments to model';
+	$file = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No project URI given' unless defined $project;
+	die 'No SLI manifest given' unless defined $file;
+	$gdc->upload ($project, $file)
 }
 
 =head2 help
@@ -434,7 +558,7 @@ sub help
 		map { "\t$_" } keys %actions ;
 }
 
-$gdc->login ($user, $password) if defined $user;
+login ($user, $password ? "$password" : undef) if defined $user;
 pod2usage ("No such command exists: '$command'")
 	unless exists $actions{$command};
 $actions{$command}->(@ARGV);
@@ -446,6 +570,7 @@ $actions{$command}->(@ARGV);
 =item *
 
 L<https://secure.gooddata.com/gdc/> -- Browsable GoodData API
+L<http://developer.gooddata.com/api/maql-ddl.html> -- MAQL DDL language documentation
 
 =item *
 

@@ -25,6 +25,7 @@ use strict;
 use warnings;
 
 use WWW::GoodData::Agent;
+use JSON::XS;
 use URI;
 
 our $root = new URI ('https://secure.gooddata.com/gdc');
@@ -128,6 +129,15 @@ sub get_links
 		}
 	}
 
+	# Uploads are on different server, but the link is incorrect
+	foreach (@{$links{$root}}) {
+		$_->{link} eq '/uploads' or next;
+		my $diroot = new URI ($_->{link}, $root->scheme)->abs ($root);
+		$diroot->host =~ /([^\.]*)(.*)/
+			and $diroot->host ("$1-di$2");
+		$_->{link} = "$diroot";
+	};
+
 	my @matches = grep {
 		my $this_link = $_;
 		# Filter out those, who lack any of our keys or
@@ -197,6 +207,12 @@ sub login
 	my $self = shift;
 	my ($login, $password) = @_;
 
+	my $netloc = $root->host.':'.$root->port;
+	# Neither on the same address, not navigatable
+	$netloc =~ s/([^\.]*)/$1-di/;
+	$self->{agent}->credentials ($netloc,
+		'GoodData project data staging area', $login => $password);
+
 	$self->{login} = $self->{agent}->post ($self->get_uri ('login'),
 		{postUserLogin => {
 			login => $login,
@@ -218,6 +234,13 @@ sub logout
 	my $self = shift;
 
 	die 'Not logged in' unless defined $self->{login};
+
+	# Forget Basic authentication
+	my $netloc = $root->host.':'.$root->port;
+	# Neither on the same address, not navigatable
+	$netloc =~ s/([^\.])/$1-di/;
+	$self->{agent}->credentials ($netloc,
+		'GoodData project data staging area', undef, undef);
 
 	# The redirect magic does not work for POSTs and we can't really
 	# handle 401s until the API provides reason for them...
@@ -346,7 +369,7 @@ sub export_report
 	my $exported = $self->poll (
 		sub { $self->{agent}->get ($result) },
 		sub { shift->{raw} ne 'null' }
-	) or die 'Timed out';
+	) or die 'Timed out waiting for report to export';
 
 	# Gotten the correctly coded result?
 	return $exported->{raw} if $exported->{type} eq {
@@ -356,6 +379,100 @@ sub export_report
 	}->{$format};
 
 	die 'Wrong type of content returned';
+}
+
+=item B<ldm_picture> PROJECT
+
+Return picture of Logical Data Model (LDM) in PNG format.
+
+=cut
+
+sub ldm_picture
+{
+	my $self = shift;
+	my $project = shift;
+
+	my $model = $self->{agent}->get ($self->{agent}->get (
+		$self->get_uri (new URI ($project),
+			{ category => 'ldm' }))->{uri});
+	die 'Expected PNG image' unless $model->{type} eq 'image/png';
+
+	return $model->{raw};
+}
+
+=item B<ldm_manage> PROJECT MAQL
+
+Execute MAQL statement for a project.
+
+=cut
+
+sub ldm_manage
+{
+	my $self = shift;
+	my $project = shift;
+	my $maql = shift;
+
+	$maql = "# WWW::GoodData MAQL execution\n$maql";
+	chomp $maql;
+
+	$self->{agent}->post (
+		$self->get_uri (new URI ($project), qw/metadata ldm ldm-manage/),
+		{ manage => { maql => $maql }});
+}
+
+=item B<upload> PROJECT MANIFEST
+
+Upload and integrate a new data load via Single Loading Interface (SLI).
+
+=cut
+
+sub upload
+{
+	my $self = shift;
+	my $project = shift;
+	my $file = shift;
+
+	# Parse the manifest
+	my $upload_info = decode_json (slurp_file ($file));
+	die "$file: not a SLI manifest"
+		unless $upload_info->{dataSetSLIManifest};
+
+	# Construct unique URI in staging area to upload to
+	my $uploads = new URI ($self->get_uri ('uploads'));
+	$uploads->path_segments ($uploads->path_segments,
+		$upload_info->{dataSetSLIManifest}{dataSet}.'-'.time);
+	$self->{agent}->request (new HTTP::Request (MKCOL => $uploads));
+
+	# Upload the manifest
+	my $manifest = $uploads->clone;
+	$manifest->path_segments ($manifest->path_segments, 'upload_info.json');
+	$self->{agent}->request (new HTTP::Request (PUT => $manifest,
+		['Content-Type' => 'application/json'], encode_json ($upload_info)));
+
+	# Upload CSV
+	my $csv = $uploads->clone;
+	$csv->path_segments ($csv->path_segments, $upload_info->{dataSetSLIManifest}{file});
+	$self->{agent}->request (new HTTP::Request (PUT => $csv,
+		['Content-Type' => 'application/csv'],
+		(slurp_file ($upload_info->{dataSetSLIManifest}{file})
+			|| die 'No CSV file specified in SLI manifest')));
+
+	# Trigger the integration
+	my $task = $self->{agent}->post (
+		$self->get_uri (new URI ($project),
+			{ category => 'self', type => 'project' }, # Validate it's a project
+			qw/metadata etl pull/),
+		{ pullIntegration => [$uploads->path_segments]->[-1] }
+	)->{pullTask}{uri};
+
+	# Wait for the task to enter a stable state
+	my $result = $self->poll (
+		sub { $self->{agent}->get ($task) },
+		sub { shift->{taskStatus} !~ /^(RUNNING|PREPARED)$/ }
+	) or die 'Timed out waiting for integration to finish';
+
+	return $result->{taskStatus} ne 'ERROR';
+}
 
 =item B<poll> BODY CONDITION
 
@@ -394,6 +511,13 @@ sub DESTROY
 {
 	my $self = shift;
 	$self->logout if $self->{login};
+}
+
+sub slurp_file
+{
+        my $file = shift;
+        open (my $fh, '<', $file) or die "$file: $!";
+        return join '', <$fh>;
 }
 
 =back

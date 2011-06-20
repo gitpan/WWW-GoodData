@@ -7,7 +7,7 @@ my $build = Module::Build->new(
 	module_name => 'WWW::GoodData',
 	license => 'perl',
 	dist_author => 'Lubomir Rintel <lkundrak@v3.sk>',
-	dist_version => '0.6',
+	dist_version => '1.0',
 	meta_merge => {
 		resources => {
 			bugtracker => 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=WWW-GoodData',
@@ -20,7 +20,9 @@ my $build = Module::Build->new(
 		'Text::ParseWords' => 0,
 		'IO::Socket::SSL' => 0,
 	},
-	build_requires => {}
+	build_requires => {
+		'Test::Pod' => 0,
+	},
 );
 
 $build->create_build_script;

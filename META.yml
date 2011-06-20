@@ -1,28 +1,30 @@
 ---
-name: WWW-GoodData
-version: 0.6
+abstract: 'Client library for GoodData REST-ful API'
 author:
   - 'Lubomir Rintel <lkundrak@v3.sk>'
-abstract: Client library for GoodData REST-ful API
-license: perl
-requires:
-  Getopt::Long: 0
-  IO::Socket::SSL: 0
-  Pod::Usage: 0
-  Text::ParseWords: 0
+build_requires:
+  Test::Pod: 0
 configure_requires:
-  Module::Build: 0.35
-generated_by: Module::Build version 0.35
+  Module::Build: 0.36
+generated_by: 'Module::Build version 0.3603'
+license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: 1.4
+name: WWW-GoodData
 provides:
   WWW::GoodData:
     file: lib/WWW/GoodData.pm
   WWW::GoodData::Agent:
     file: lib/WWW/GoodData/Agent.pm
     version: 1.0
+requires:
+  Getopt::Long: 0
+  IO::Socket::SSL: 0
+  Pod::Usage: 0
+  Text::ParseWords: 0
 resources:
-  bugtracker: "http://rt.cpan.org/NoAuth/Bugs.html?Dist=WWW-GoodData"
+  bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=WWW-GoodData
   license: http://dev.perl.org/licenses/
   repository: https://github.com/lkundrak/www-gooddata
+version: 1.0
