@@ -32,4 +32,4 @@ resources:
   bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=WWW-GoodData
   license: http://dev.perl.org/licenses/
   repository: https://github.com/lkundrak/www-gooddata
-version: 1.3_37
+version: 1.4
