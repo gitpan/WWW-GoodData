@@ -26,7 +26,7 @@ use strict;
 use warnings;
 
 use base qw/LWP::UserAgent/;
-use JSON::XS;
+use JSON;
 
 our $VERSION = '1.0';
 
@@ -128,8 +128,8 @@ sub request
 	return $response if ref $response eq 'HASH';
 
 	# Decode
-	my $decoded = eval { new JSON::XS->allow_nonref->decode ($response->content) }
-		if $response->header ('Content-Type') eq 'application/json';
+	my $decoded = eval { decode_json ($response->content) }
+		if $response->header ('Content-Type') =~ /^application\/json(;.*)?/;
 	$decoded = {
 		type => $response->header ('Content-Type'),
 		raw => $response->content,
