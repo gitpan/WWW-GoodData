@@ -164,7 +164,7 @@ sub get_links
 	# And decanonicalize, ommiting the scheme and authority part if possible
 	my @links = $self->get_canonical_links ($root, @_);
 	$_->{link} = $_->{link}->rel ($root)->authority
-		?  $_->{link} : $_->{link}->path foreach @links;
+		?  $_->{link} : new URI ($_->{link}->path) foreach @links;
 
 	return @links;
 }
@@ -218,7 +218,7 @@ sub login
 	my ($login, $password) = @_;
 
 	my $root = new URI ($self->{agent}{root});
-	my $staging = $self->get_uri ('uploads');
+	my $staging = $self->get_uri ('uploads')->abs ($root);
 	my $netloc = $staging->host.':'.$staging->port;
 
 	$self->{agent}->credentials ($netloc,
