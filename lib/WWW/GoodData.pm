@@ -261,6 +261,34 @@ sub logout
 	$self->{login} = undef;
 }
 
+=item B<change_passwd> OLD NEW
+
+Change user password given the old and new password.
+
+=cut
+
+sub change_passwd
+{
+	my $self = shift;
+	my $old_passwd = shift or die 'No old password given';
+	my $new_passwd = shift or die 'No new password given';
+
+	die 'Not logged in' unless defined $self->{login};
+
+	my $profile = $self->{agent}->get ($self->{login}{userLogin}{profile});
+	my $new_profile = {
+		'accountSetting' => {
+			'old_password' => $old_passwd,
+			'password' => $new_passwd,
+			'verifyPassword' => $new_passwd,
+			'firstName' => $profile->{accountSetting}->{firstName},
+			'lastName' => $profile->{accountSetting}->{lastName}
+		}
+	};
+
+	$self->{agent}->put ($self->{login}{userLogin}{profile}, $new_profile);
+}
+
 =item B<projects>
 
 Return array of links to project resources on metadata server.
@@ -294,10 +322,13 @@ sub delete_project
 	$self->{agent}->delete ($uri);
 }
 
-=item B<create_project> TITLE SUMMARY
+=item B<create_project> TITLE SUMMARY TEMPLATE
 
-Create a project given its title and optionally summary,
+Create a project given its title and optionally summary and project template,
 return its identifier.
+
+The list of valid project templates is available from the template server:
+L<https://secure.gooddata.com/projectTemplates/>.
 
 =cut
 
@@ -306,6 +337,7 @@ sub create_project
 	my $self = shift;
 	my $title = shift or die 'No title given';
 	my $summary = shift || '';
+	my $template = shift;
 
 	# The redirect magic does not work for POSTs and we can't really
 	# handle 401s until the API provides reason for them...
@@ -318,8 +350,214 @@ sub create_project
 			meta => {
 				summary => $summary,
 				title => $title,
+				($template ? (projectTemplate => $template) : ()),
 			}
 	}})->{uri};
+}
+
+=item B<wait_project_enabled> PROJECT_URI
+
+Wait until project identified by its uri is in enabled state,
+return its identifier.
+
+=cut
+
+sub wait_project_enabled
+{
+	my $self = shift;
+	my $project_uri = shift || die 'Project uri was not specified.';
+
+	my $state;
+	my $exported = $self->poll (
+		sub { $self->{agent}->get ($project_uri) },
+		sub { $_[0] and exists $_[0]->{project} and exists $_[0]->{project}{content} and exists $_[0]->{project}{content}{state} and
+			(($state = $_[0]->{project}{content}{state}) !~ /^(PREPARING|PREPARED|LOADING)$/)
+		}
+	) or die 'Timed out waiting for project preparation';
+	($state eq 'ENABLED') or die "Unable to enable project";
+}
+
+=item B<create_user> LOGIN PASSWORD FIRST_NAME LAST_NAME PHONE COMPANY
+
+Create a user given its login, password, first name, surname, phone and optionally company,
+return his identifier.
+
+=cut
+
+sub create_user
+{
+	my $self = shift;
+	my $login = shift;
+	my $passwd = shift;
+	my $firstname = shift;
+	my $lastname = shift;
+	my $phone = shift;
+	my $company = shift || '';
+
+	return $self->{agent}->post ('/gdc/account/domains/default/users', { #TODO links does not exists
+		accountSetting => {
+			login => $login,
+			password => $passwd,
+			verifyPassword => $passwd,
+			firstName => $firstname,
+			lastName => $lastname,
+			phoneNumber => $phone,
+			companyName => $company
+	}})->{uri};
+}
+
+=item B<get_roles>
+
+Gets project roles. Project is identified by its id.
+return array of project roles.
+
+=cut
+
+sub get_roles
+{
+	my $self = shift;
+	my $project = shift;
+
+	return $self->{agent}->get (
+		$self->get_uri (new URI($project), 'roles'))->{projectRoles}{roles};
+}
+
+=item B<get_roles_by_id>
+
+Gets project roles. Project is identified by its id.
+return hash map role id => role uri.
+
+=cut
+
+sub get_roles_by_id
+{
+	my $self = shift;
+	my $project = shift;
+	my $rolesUris = $self->get_roles ($project);
+
+	my %roles;
+
+	foreach my $roleUri (@$rolesUris) {
+		my $role = $self->{agent}-> get ($roleUri);
+		my $roleId = $role->{projectRole}{meta}{identifier};
+		$roles{$roleId} = $roleUri;
+	}
+	return %roles;
+}
+
+=item B<assign_user> USER PROJECT ROLE
+
+Assign user to project.
+return his identifier.
+
+=cut
+
+sub assign_user
+{
+	my $self = shift;
+	my $user = shift;
+	my $project = shift;
+	my $role = shift;
+
+	my @userRoles = ($role);
+
+	return $self->{agent}->post ($self->get_uri (new URI($project),'users'), {
+		user => {
+			content => {
+				status => "ENABLED",
+				userRoles => \@userRoles
+			},
+			links => {
+				self => $user
+			}
+		}
+	});
+}
+
+=item B<schedule> PROJECT_URI CRON PARAMS HIDDEN_PARAMS
+
+Create a schedule given its project, type, cron expression and optionally
+parameters and hidden parameters, return created schedule object.
+
+=cut
+
+sub schedule {
+	my $self = shift;
+	my $project_uri = shift;
+	my $type = shift;
+	my $cron = shift;
+	my $params = shift || { };
+	my $hidden_params = shift || { };
+
+	return $self->{agent}->post ($project_uri.'/schedules', {schedule => { #TODO no link to schedules does not exists
+		type => $type,
+		params => $params,
+		hiddenParams => $hidden_params,
+		cron => $cron
+	}});
+}
+
+=item B<schedule_msetl_graph> PROJECT_URI TRANSFORMATION_ID GRAPH_NAME CRON PARAMS HIDDEN_PARAMS
+
+Create a MSETL schedule given its project, clover transformation id,
+clover graph to schedule, cron expression and optionally
+parameters and hidden parameters, return created schedule object.
+
+=cut
+
+sub schedule_msetl_graph {
+	my $self = shift;
+	my $project_uri = shift;
+	my $trans_id = shift;
+	my $graph = shift;
+	my $cron = shift;
+	my $params = shift || { };
+	my $hidden_params = shift || { };
+
+	my $type = "MSETL";
+
+	$params->{"TRANSFORMATION_ID"} = $trans_id;
+	$params->{"CLOVER_GRAPH"} = $graph;
+
+	return $self->schedule (
+		$project_uri, $type, $cron, $params, $hidden_params);
+}
+
+=item B<create_clover_transformation> PROJECT_URI TEMPLATE TRANSFORMATION_ID NAME
+
+Create a clover transformation given its project uri, template, clover
+transformation id in template and optionaly name, return created transformation
+object.
+
+=cut
+
+sub create_clover_transformation
+{
+	my $self = shift;
+	my $projectUri = shift;
+	my $template = shift;
+	my $transformation = shift;
+	my $name = shift || $transformation;
+
+	my $file = $transformation.'.zip';
+	my $path = '/uploads/'.$file;
+
+	# download clover transformation zip file from project template
+	my $content = $self->{agent}->get ($template.'/'.$file);
+
+	# upload clover transformation zip file
+	my $uploads = new URI ($self->get_uri ('uploads'));
+	$uploads->path_segments ($uploads->path_segments, $file);
+	$self->{agent}->request (new HTTP::Request (PUT => $uploads,
+		['Content-Type' => 'application/zip'], $content->{raw}));
+
+	# create transformation
+	return $self->{agent}->post ($projectUri."/etl/clover/transformations", { #TODO links does not exists
+		cloverTransformation => {
+			name => $name,
+			path => $path
+		}
+	});
 }
 
 =item B<reports> PROJECT
@@ -520,6 +758,91 @@ sub poll
         return undef;
 }
 
+=item B<create_object_with_expression> PROJECT URI TYPE TITLE SUMMARY EXPRESSION
+
+Create a new metadata object of type TYPE with EXPRESSION as the only content.
+
+=cut
+
+sub create_object_with_expression
+{
+	my $self = shift;
+	my $project = shift;
+	my $uri = shift;
+	my $type = shift or die 'No type given';
+	my $title = shift or die 'No title given';
+	my $summary = shift || '';
+	my $expression = shift or die 'No expression given';
+
+	if (defined $uri) {
+		$uri = new URI ($uri);
+	} else {
+		$uri = $self->get_uri (new URI ($project), qw/metadata obj/);
+	}
+
+	return $self->{agent}->post (
+		$uri,
+		{ $type => {
+			content => {
+				expression => $expression
+			},
+			meta => {
+				summary => $summary,
+				title => $title,
+			}
+		}}
+	)->{uri};
+}
+
+=item B<create_report_definition> PROJECT URI TITLE SUMMARY METRICS DIM FILTERS
+
+Create a new reportDefinition in metadata.
+
+=cut
+
+sub create_report_definition
+{
+	my $self = shift;
+	my $project = shift;
+	my $uri = shift;
+	my $title = shift or die 'No title given';
+	my $summary = shift || '';
+	my $metrics = shift || [];
+	my $dim = shift || [];
+	my $filters = shift || [];
+
+	if (defined $uri) {
+		$uri = new URI ($uri);
+	} else {
+		$uri = $self->get_uri (new URI ($project), qw/metadata obj/);
+	}
+
+	return $self->{agent}->post (
+		$uri,
+		{ reportDefinition => {
+			content => {
+				filters => [ map +{ expression => $_ }, @$filters ],
+				grid => {
+					columns => [ "metricGroup" ],
+					metrics => [ map +{ alias => '', uri => $_ }, @$metrics ],
+					rows => [ map +{ attribute => { alias => '', uri => $_,
+						totals => [[]] } }, @$dim ],
+					sort => {
+						columns => [],
+						rows => [],
+					},
+					columnWidths => []
+				},
+				format => "grid"
+			},
+			meta => {
+				summary => $summary,
+				title => $title,
+			}
+		}}
+	)->{uri};
+}
+
 =item B<DESTROY>
 
 Log out the session with B<logout> unless not logged in.
@@ -561,14 +884,22 @@ L<WWW::GoodData::Agent> -- GoodData API-aware user agent
 
 =head1 COPYRIGHT
 
-Copyright 2011, Lubomir Rintel
+Copyright 2011, 2012 Lubomir Rintel
+
+Copyright 2012 Adam Stulpa, Jan Orel, Tomas Janousek
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
-=head1 AUTHOR
+=head1 AUTHORS
 
 Lubomir Rintel C<lkundrak@v3.sk>
+
+Adam Stulpa C<adam.stulpa@gooddata.com>
+
+Jan Orel C<jan.orel@gooddata.com>
+
+Tomas Janousek C<tomi@nomi.cz>
 
 =cut
 
