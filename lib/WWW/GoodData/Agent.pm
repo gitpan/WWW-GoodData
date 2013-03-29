@@ -147,6 +147,9 @@ sub request
 	# Pass processed response from subrequest (redirect)
 	return $response if ref $response eq 'HASH';
 
+	# Do not bother checking content and type if there's none
+	return undef if $response->code == 204;
+
 	# Decode
 	my $decoded = eval { decode_json ($response->content) }
 		if $response->header ('Content-Type') =~ /^application\/json(;.*)?/;
@@ -186,7 +189,9 @@ L<LWP::UserAgent> -- Perl HTTP client
 
 =head1 COPYRIGHT
 
-Copyright 2011, Lubomir Rintel
+Copyright 2011, 2012, 2013 Lubomir Rintel
+
+Copyright 2012 Jan Orel
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

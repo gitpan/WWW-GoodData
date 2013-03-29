@@ -322,13 +322,16 @@ sub delete_project
 	$self->{agent}->delete ($uri);
 }
 
-=item B<create_project> TITLE SUMMARY TEMPLATE
+=item B<create_project> TITLE SUMMARY TEMPLATE DRIVER TOKEN
 
-Create a project given its title and optionally summary and project template,
+Create a project given its title and optionally summary, project template,
+db engine driver and authorization token
 return its identifier.
 
 The list of valid project templates is available from the template server:
 L<https://secure.gooddata.com/projectTemplates/>.
+
+Valid db engine drivers are 'Pg' (default) and 'mysql'.
 
 =cut
 
@@ -338,6 +341,8 @@ sub create_project
 	my $title = shift or die 'No title given';
 	my $summary = shift || '';
 	my $template = shift;
+	my $driver= shift;
+	my $token = shift;
 
 	# The redirect magic does not work for POSTs and we can't really
 	# handle 401s until the API provides reason for them...
@@ -345,8 +350,12 @@ sub create_project
 
 	return $self->{agent}->post ($self->get_uri ('projects'), {
 		project => {
-			# No hook to override this; use web UI
-			content => { guidedNavigation => 1 },
+			content => {
+				# No hook to override this; use web UI
+				guidedNavigation => 1,
+				($driver ? (driver => $driver) : ()),
+				($token ? (authorizationToken => $token) : ())
+			},
 			meta => {
 				summary => $summary,
 				title => $title,
@@ -355,6 +364,58 @@ sub create_project
 	}})->{uri};
 }
 
+=item B<create_user> DOMAIN EMAIL LOGIN PASSWORD FIRST_NAME LAST_NAME PHONE COMPANY SSO_PROVIDER
+
+Create a user given its email, login, password, first name, surname, phone and optionally company,
+sso provider in domain.
+
+Returns user identifier (URI).
+
+=cut
+
+sub create_user
+{
+	my $self = shift;
+	my $domain_uri = shift || die "No domain specified";
+	my $email = shift || die "Email must be specified";
+	my $login = shift || $email;
+	my $passwd = shift;
+	my $firstname = shift;
+	my $lastname = shift;
+	my $phone = shift;
+	my $company = shift || '';
+	my $sso_provider = shift;
+
+	return $self->{agent}->post ($domain_uri."/users", { #TODO links does not exists in REST API
+		accountSetting => {
+			login => $login,
+			email => $email,
+			password => $passwd,
+			verifyPassword => $passwd,
+			firstName => $firstname,
+			lastName => $lastname,
+			phoneNumber => $phone,
+			companyName => $company,
+			($sso_provider ? (ssoProvider => $sso_provider) : ()),
+	}})->{uri};
+}
+
+=item B<get_roles> PROJECT
+
+Gets project roles.
+
+Return array of project roles.
+
+=cut
+
+sub get_roles
+{
+	my $self = shift;
+	my $project = shift;
+
+	return $self->{agent}->get (
+		$self->get_uri (new URI($project), 'roles'))->{projectRoles}{roles};
+}
 =item B<reports> PROJECT
 
 Return array of links to repoort resources on metadata server.
@@ -679,9 +740,9 @@ L<WWW::GoodData::Agent> -- GoodData API-aware user agent
 
 =head1 COPYRIGHT
 
-Copyright 2011, 2012 Lubomir Rintel
+Copyright 2011, 2012, 2013 Lubomir Rintel
 
-Copyright 2012 Adam Stulpa, Jan Orel, Tomas Janousek
+Copyright 2012, 2013 Adam Stulpa, Jan Orel, Tomas Janousek
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

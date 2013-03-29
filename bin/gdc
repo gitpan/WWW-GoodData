@@ -84,6 +84,24 @@ new Getopt::Long::Parser (
 ) or pod2usage (2);
 $command = shift if @ARGV;
 
+sub password
+{
+	my $prompt = shift;
+	my $password;
+
+	return undef unless -t STDIN;
+
+	# stty might not be portable to NT and such
+	system 'stty -echo'
+		and die 'Can not ask for password securely';
+	print "$prompt: ";
+	chomp ($password = <STDIN>);
+	print "\n";
+	system 'stty echo';
+
+	return $password;
+}
+
 =head1 COMMANDS
 
 =cut 
@@ -94,6 +112,8 @@ my %actions = (
 	lsprojects => \&lsprojects,
 	rmproject => \&rmproject,
 	mkproject => \&mkproject,
+	mkuser => \&mkuser,
+	lsroles => \&lsroles,
 	project => \&project,
 	lsreports => \&lsreports,
 	export => \&export,
@@ -168,16 +188,7 @@ sub login
 	$password = shift if @_;
 	die 'Extra arguments' if @_;
 	die 'No user name given' unless defined $user;
-
-	# stty might not be portable to NT and such
-	if (not defined $password and -t STDIN) {
-		system 'stty -echo'
-			and die 'Can not ask for password securely';
-		print 'Password: ';
-		chomp ($password = <STDIN>);
-		print "\n";
-		system 'stty echo';
-	}
+	$password = password ('Password') unless defined $password;
 
 	$gdc->login ($user, $password);
 }
@@ -264,6 +275,37 @@ sub lsprojects
 	}
 }
 
+=head2 lsroles
+
+Print a list of available roles in project.
+
+=over 4
+
+=item B<-P>, B<--project>
+
+Set or override the project to act on.
+See global B<--project> option for the detailed description.
+
+=back
+
+=cut
+
+sub lsroles
+{
+	my $this_project = $project;
+
+	GetOptionsFromArray (\@_,
+		'P|project=s' => \$this_project,
+	) or die 'Bad arguments to lsroles';
+	die 'Extra arguments' if @_;
+
+	die "No project selected" unless $this_project;
+
+	foreach my $role (@{$gdc->get_roles($this_project)}) {
+		print $role."\n";
+	}
+}
+
 =head2 rmproject
 
 Delete a project.
@@ -292,6 +334,91 @@ sub rmproject
 	$gdc->delete_project ($project);
 }
 
+=head2 mkuser <email> <firstname> <lastname>
+
+Create user.
+
+=over 4
+
+=item B<-d>, B<--domain>
+
+URI of an user domain in which will be user created.
+
+Defaults to C</gdc/account/domains/default>, which is almost definitely useless to you.
+Get a proper domain URI from your support representative.
+
+=item B<-e>, B<--email>
+
+User email.
+
+=item B<-l>, B<--login>
+
+User login. Same as email if no login is provided
+
+=item B<-p>, B<--password>
+
+User password. Will be asked for if not provided.
+
+=item B<-f>, B<--firstname>
+
+User first name.
+
+=item B<-l>, B<--lastname>
+
+User last name.
+
+=item B<-t>, B<--phone>
+
+User phone number.
+
+=item B<-c>, B<--company>
+
+User company.
+
+=item B<-o>, B<--sso>
+
+User company's DNS suffix, if SSO is used.
+
+=back
+
+=cut
+
+sub mkuser
+{
+	my $domain = '/gdc/account/domains/default';
+	my $email;
+	my $login;
+	my $passwd;
+	my $firstname;
+	my $lastname;
+	my $phone;
+	my $company;
+	my $sso_provider;
+
+	GetOptionsFromArray (\@_,
+		'd|domain=s' => \$domain,
+		'e|email=s' => \$email,
+		'l|login=s' => \$login,
+		'p|password=s' => \$passwd,
+		'f|firstname=s' => \$firstname,
+		'l|lastname=s' => \$lastname,
+		't|phone=s' => \$phone,
+		'c|company=s' => \$company,
+		'o|sso=s' => \$sso_provider,
+	) or die 'Bad arguments to mkuser';
+	$email = shift if @_;
+	$firstname = shift if @_;
+	$lastname = shift if @_;
+	die 'Extra arguments' if @_;
+	die 'No user e-mail given' unless defined $email;
+	die 'No first name given' unless defined $firstname;
+	die 'No last name given' unless defined $lastname;
+	$passwd = password ("New user's Password") unless defined $passwd;
+
+	$user = $gdc->create_user ($domain, $email, $login, $passwd, $firstname,
+		$lastname, $phone, $company, $sso_provider);
+}
+
 =head2 mkproject <title> [summary]
 
 Create a project.
@@ -306,6 +433,19 @@ Title of the project.
 
 Descriptive summary of the project.
 
+=item B<-e>, B<--template>
+
+Project template. The list of valid project templates is available from
+the template server: L<https://secure.gooddata.com/projectTemplates/>.
+
+=item B<-d>, B<--driver>
+
+Valid db engine drivers are 'Pg' (default) and 'mysql'.
+
+=item B<-k>, B<--token>
+
+Authorization token.
+
 =back
 
 =cut
@@ -314,17 +454,26 @@ sub mkproject
 {
 	my $title;
 	my $summary = '';
+	my $template;
+	my $driver;
+	my $token;
 
 	GetOptionsFromArray (\@_,
 		't|title=s' => \$title,
 		's|summary=s' => \$summary,
+		'e|template=s' => \$template,
+		'd|driver=s' => \$driver,
+		'k|token=s' => \$token,
 	) or die 'Bad arguments to mkproject';
 	$title = shift if @_;
 	$summary = shift if @_;
+	$template = shift if @_;
+	$driver = shift if @_;
+	$token = shift if @_;
 	die 'Extra arguments' if @_;
 	die 'No project title given' unless defined $title;
 
-	$project = $gdc->create_project ($title, $summary);
+	$project = $gdc->create_project ($title, $summary, $template, $driver, $token);
 }
 
 =head2 lsreports
@@ -725,7 +874,9 @@ L<LWP::UserAgent> -- Perl HTTP client
 
 =head1 COPYRIGHT
 
-Copyright 2011, Lubomir Rintel
+Copyright 2011, 2012, 2013 Lubomir Rintel
+
+Copyright 2012, 2013 Adam Stulpa, Tomas Janousek
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

@@ -50,8 +50,10 @@ sub authenticate
 
 	# Refresh the token cookie
 	# We should obtain the URI from WWW::GoodData somehow...
-	#die $gdc->get_uri (qw/token/);
-	$agent->get ('/gdc/account/token');
+	my $token_uri = $request->uri->clone;
+	$token_uri->path ('/gdc/account/token');
+	$token_uri->fragment (undef);
+	$agent->get ($token_uri);
 
 	$request->header (Cookie => '');
 
@@ -86,7 +88,7 @@ available) for the client to negotiate.
 
 =head1 COPYRIGHT
 
-Copyright 2011, Lubomir Rintel
+Copyright 2011, 2012, 2013 Lubomir Rintel
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
