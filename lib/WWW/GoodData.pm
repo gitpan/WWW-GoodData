@@ -446,8 +446,8 @@ sub compute_report
 
 	return $self->{agent}->post (
 		$self->get_uri (qw/xtab xtab-executor3/),
-		{ report_req => { report => $report }}
-	)->{reportResult2}{meta}{uri};
+		{ report_req => { report => ''.$report }}
+	);
 }
 
 =item B<export_report> REPORT FORMAT
@@ -467,7 +467,7 @@ sub export_report
 	my $result = $self->{agent}->post (
 		$self->get_uri (qw/report-exporter exporter-executor/),
 		{ result_req => { format => $format,
-			report => $self->compute_report ($report) }}
+			result => $self->compute_report ($report) }}
 	);
 
 	# This is for new release, where location is finally set correctly;
@@ -483,11 +483,15 @@ sub export_report
 	$exported = $self->{agent}->get ($exported->{uri}) if exists $exported->{uri};
 
 	# Gotten the correctly coded result?
-	return $exported->{raw} if $exported->{type} eq {
+	my $wanted = $format;
+	my %compat = (
 		png => 'image/png',
 		pdf => 'application/pdf',
 		xls => 'application/vnd.ms-excel',
-	}->{$format};
+		csv => 'text/csv',
+	);
+	$wanted = $compat{$wanted} if exists $compat{$wanted};
+	return $exported->{raw} if $exported->{type} =~ /^$wanted/;
 
 	die 'Wrong type of content returned';
 }

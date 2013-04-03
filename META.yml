@@ -1,6 +1,6 @@
 ---
 name: WWW-GoodData
-version: 1.8
+version: 1.9
 author:
   - 'Lubomir Rintel <lkundrak@v3.sk>'
 abstract: Client library for GoodData REST-ful API
