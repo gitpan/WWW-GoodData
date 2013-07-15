@@ -28,6 +28,7 @@ use WWW::GoodData::Agent;
 use JSON;
 use URI;
 
+our $VERSION = '1.10';
 our $root = new URI ('https://secure.gooddata.com/gdc');
 
 =head1 METHODS
@@ -248,7 +249,7 @@ sub logout
 
 	# Forget Basic authentication
 	my $root = new URI ($self->{agent}{root});
-	my $staging = $self->get_uri ('uploads');
+	my $staging = $self->get_uri ('uploads')->abs ($root);
 	my $netloc = $staging->host.':'.$staging->port;
 	$self->{agent}->credentials ($netloc,
 		'GoodData project data staging area', undef, undef);

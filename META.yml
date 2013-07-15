@@ -1,6 +1,6 @@
 ---
 name: WWW-GoodData
-version: 1.9
+version: 1.10
 author:
   - 'Lubomir Rintel <lkundrak@v3.sk>'
 abstract: Client library for GoodData REST-ful API
@@ -26,6 +26,7 @@ provides:
     file: lib/LWP/Authen/Gooddata.pm
   WWW::GoodData:
     file: lib/WWW/GoodData.pm
+    version: 1.10
   WWW::GoodData::Agent:
     file: lib/WWW/GoodData/Agent.pm
     version: 1.0
